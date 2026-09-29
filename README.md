@@ -1,7 +1,7 @@
 # msa-checkout (Python)
 
 Python-Portierung des Java/Spring-Boot-Service `checkout` (predic8-MSA-Shop).
-Flask (REST) + kafka-python (Event-Anbindung), In-Memory-Preisspeicher.
+Flask (REST) + confluent-kafka (Event-Anbindung), In-Memory-Preisspeicher.
 
 ## Architektur
 - REST `POST /checkouts` (Body = Basket): prueft Verfuegbarkeit, vergibt eine

@@ -1,13 +1,9 @@
-"""Kafka-Anbindung: Operation, Producer, ShopListener.
-
-TODO (Uebung): den Listener implementieren.
-"""
 import json
 import threading
 from dataclasses import dataclass
 from typing import Any
 
-from kafka import KafkaConsumer, KafkaProducer
+from confluent_kafka import Consumer, Producer, KafkaException
 
 from .config import KAFKA_BOOTSTRAP_SERVERS, SHOP_TOPIC, KAFKA_GROUP_ID
 from .store import prices
@@ -31,22 +27,29 @@ class Operation:
 
 
 class ShopProducer:
-    """Sendet Operation-Events auf 'shop'. Verbindung wird verzoegert
-    aufgebaut, damit die App auch ohne laufendes Kafka startet."""
+    """Sendet Operation-Events auf 'shop' (confluent-kafka). Verbindung wird
+    verzoegert aufgebaut, damit die App auch ohne laufendes Kafka startet."""
 
     def __init__(self):
         self._producer = None
 
     def _get(self):
         if self._producer is None:
-            self._producer = KafkaProducer(
-                bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
-                value_serializer=lambda op: op.to_bytes(),
-            )
+            self._producer = Producer({"bootstrap.servers": KAFKA_BOOTSTRAP_SERVERS})
         return self._producer
 
     def send(self, op: "Operation"):
-        self._get().send(SHOP_TOPIC, op).get(timeout=10)
+        errors = []
+
+        def _cb(err, msg):
+            if err is not None:
+                errors.append(err)
+
+        p = self._get()
+        p.produce(SHOP_TOPIC, value=op.to_bytes(), on_delivery=_cb)
+        p.flush(10)
+        if errors:
+            raise KafkaException(errors[0])
 
 
 class ShopListener:
@@ -57,24 +60,31 @@ class ShopListener:
         # TODO: Operation verarbeiten.
         #   - nur bo == "article" ist relevant
         #   - object enthaelt {uuid, price}
-        #   - action "upsert": Preis in `self.prices` setzen (nur wenn price != None;
-        #     vorhandenen Preis beibehalten, falls schon gesetzt - wie im Original)
-        #   - action "delete": Preis aus `self.prices` entfernen
+        #   - action "upsert": Preis setzen (nur wenn price != None; vorhandenen
+        #     Preis beibehalten, falls schon gesetzt - wie im Original)
+        #   - action "delete": Preis entfernen
         raise NotImplementedError("ShopListener.handle noch nicht implementiert")
 
     def start(self):
         threading.Thread(target=self._consume, daemon=True).start()
 
     def _consume(self):
-        consumer = KafkaConsumer(
-            SHOP_TOPIC,
-            bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
-            group_id=KAFKA_GROUP_ID,
-            auto_offset_reset="earliest",
-            value_deserializer=Operation.from_bytes,
+        consumer = Consumer(
+            {
+                "bootstrap.servers": KAFKA_BOOTSTRAP_SERVERS,
+                "group.id": KAFKA_GROUP_ID,
+                "auto.offset.reset": "earliest",
+            }
         )
-        for msg in consumer:
+        consumer.subscribe([SHOP_TOPIC])
+        while True:
+            msg = consumer.poll(1.0)
+            if msg is None:
+                continue
+            if msg.error():
+                print(f"[checkout] Consumer-Fehler: {msg.error()}")
+                continue
             try:
-                self.handle(msg.value)
+                self.handle(Operation.from_bytes(msg.value()))
             except Exception as e:
                 print(f"[checkout] Fehler beim Verarbeiten: {e}")
