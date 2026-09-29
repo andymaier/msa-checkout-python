@@ -1,7 +1,4 @@
-"""Kafka-Anbindung: Operation, Producer, ShopListener.
-
-TODO (Uebung): den Listener implementieren.
-"""
+"""Kafka-Anbindung: Operation, Producer, ShopListener - Loesung."""
 import json
 import threading
 from dataclasses import dataclass
@@ -31,9 +28,6 @@ class Operation:
 
 
 class ShopProducer:
-    """Sendet Operation-Events auf 'shop'. Verbindung wird verzoegert
-    aufgebaut, damit die App auch ohne laufendes Kafka startet."""
-
     def __init__(self):
         self._producer = None
 
@@ -54,13 +48,18 @@ class ShopListener:
         self.prices = prices
 
     def handle(self, op: Operation):
-        # TODO: Operation verarbeiten.
-        #   - nur bo == "article" ist relevant
-        #   - object enthaelt {uuid, price}
-        #   - action "upsert": Preis in `self.prices` setzen (nur wenn price != None;
-        #     vorhandenen Preis beibehalten, falls schon gesetzt - wie im Original)
-        #   - action "delete": Preis aus `self.prices` entfernen
-        raise NotImplementedError("ShopListener.handle noch nicht implementiert")
+        if op.bo != "article":
+            return
+        obj = op.object or {}
+        uuid = obj.get("uuid")
+        price = obj.get("price")
+        if op.action == "upsert":
+            if price is None:
+                return
+            old = self.prices.get(uuid)
+            self.prices.set(uuid, old if old is not None else price)
+        elif op.action == "delete":
+            self.prices.delete(uuid)
 
     def start(self):
         threading.Thread(target=self._consume, daemon=True).start()

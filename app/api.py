@@ -1,7 +1,6 @@
-"""REST-API (Flask).
+"""REST-API (Flask) - Loesung."""
+from uuid import uuid4
 
-TODO (Uebung): POST /checkouts implementieren.
-"""
 from flask import Blueprint, request, jsonify
 
 from .service import CheckoutService
@@ -16,12 +15,23 @@ producer = ShopProducer()
 
 @bp.post("/checkouts")
 def checkout():
-    # TODO:
-    #   1. Warenkorb (Basket) aus dem JSON-Request-Body lesen
-    #   2. Verfuegbarkeit pruefen (service.are_articles_available) -> sonst 409
-    #   3. uuid vergeben (basket["uuid"]); je Item Preis aus `prices` setzen,
-    #      fehlt der Preis -> NoPriceException (wird zu 400)
-    #   4. Operation("basket", "upsert", basket) an Topic "shop" senden
-    #      (producer.send(...)); bei Eventbus-Fehler -> 503
-    #   5. 202 Accepted mit {"uuid": uuid} zurueckgeben
-    raise NotImplementedError("POST /checkouts noch nicht implementiert")
+    basket = request.get_json(force=True)
+
+    if not service.are_articles_available(basket):
+        return "", 409
+
+    uuid = str(uuid4())
+    basket["uuid"] = uuid
+
+    for item in basket.get("items", []):
+        price = prices.get(item.get("articleId"))
+        if price is None:
+            raise NoPriceException()
+        item["price"] = price
+
+    try:
+        producer.send(Operation("basket", "upsert", basket))
+    except Exception:
+        return jsonify({"error": "Can not send message to eventbus!"}), 503
+
+    return jsonify({"uuid": uuid}), 202
